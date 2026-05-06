@@ -1103,6 +1103,28 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
   </div>
 </div>
 
+<!-- ══ MODAL: ABRIR FASE 2 ══ -->
+<div class="modal-overlay" id="modal-fase2">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3 id="modal-f2-title">Abrir Fase 2 — Retorno ao Campo</h3>
+      <button class="modal-close" onclick="closeModal('modal-fase2')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="info-box" id="f2-info-box">Itens prontos para campo nesta OS:</div>
+      <div id="f2-itens-list" style="margin:12px 0;max-height:340px;overflow-y:auto"></div>
+      <div class="field" style="margin-top:8px">
+        <label>Observação para o campo (opcional)</label>
+        <textarea id="f2-obs" rows="2" placeholder="Ex: Priorizar VP-01, calibração agendada para 10h..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-fase2')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarFase2()">🚗 Enviar Fase 2 ao FieldTap</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ MODAL: COTAÇÃO / DADOS ADM ══ -->
 <div class="modal-overlay" id="modal-cotacao">
   <div class="modal">
@@ -1144,7 +1166,7 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
 // ═══════════════════════════════════════════════════════════════
 // GAS CONFIG — substitua pela URL real do Web App
 // ═══════════════════════════════════════════════════════════════
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyIAi-J0DrEBgRj8fIWQShO9ebvunSA0HMnnSzCEbax20db7x9xJ9L204KwzOHZYsw3mA/exec'; // TODO: colar URL do GAS aqui
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbz-YAuQjsqJYIW3Im4vzM1whJ9mitfWokdD1hsniBv6XQLoa9imkAQ7YXLI0PPDoFXk/exec'; // TODO: colar URL do GAS aqui
 
 // ═══════════════════════════════════════════════════════════════
 // ESTADO LOCAL (banco de dados em memória enquanto GAS não está conectado)
@@ -1418,9 +1440,11 @@ function renderOS() {
       <td><span class="phase-badge ${phaseClass[o.status]||'phase-1'}">${o.status}</span></td>
       <td><span class="pill ${o.status==='Encerrada'?'pill-enc':'pill-f1'}">${o.status==='Encerrada'?'✓ Concluída':'🔄 Em andamento'}</span></td>
       <td>
-        <div style="display:flex;gap:4px">
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-sm" onclick="editarOS('${o.id_os}')">✏️</button>
           <button class="btn btn-danger btn-sm" onclick="confirmarExclusao('os','${o.id_os}','OS '+o.numero_os)">🗑</button>
+          ${o.status === 'Fase 1' ? `<button class="btn btn-primary btn-sm" onclick="abrirModalFase2('${o.id_os}')" title="Abrir Fase 2 — Retorno ao campo" style="font-size:11px;padding:3px 8px">🚗 Fase 2</button>` : ''}
+          ${o.status === 'Fase 2' ? `<button class="btn btn-ghost btn-sm" onclick="encerrarOS('${o.id_os}')" title="Encerrar OS" style="font-size:11px;padding:3px 8px;border-color:var(--success);color:var(--success)">✅ Encerrar</button>` : ''}
         </div>
       </td>
     </tr>`;
@@ -2241,7 +2265,7 @@ function excluir(tipo, id) {
 // ═══════════════════════════════════════════════════════════════
 const PIPELINE_NORMAL = [
   'aguardando_cotacao','cotado','proposta_erp','aprovado_cliente',
-  'em_compra','pecas_recebidas','pronto_campo','em_calibracao','calibrado','instalado','concluido'
+  'em_compra','pecas_recebidas','pronto_campo','em_campo_f2','em_calibracao','calibrado','instalado','concluido'
 ];
 const PIPELINE_CURTO = ['instalado_campo','em_calibracao','calibrado','concluido'];
 
@@ -2254,6 +2278,7 @@ const STATUS_LABEL = {
   em_compra: 'Em Compra',
   pecas_recebidas: 'Recebido',
   pronto_campo: 'Pronto p/ Campo',
+  em_campo_f2: 'Em Campo F2',
   instalado_campo: 'Instal. Campo',
   em_calibracao: 'Em Calibração',
   calibrado: 'Calibrado',
@@ -2269,6 +2294,7 @@ const STATUS_CSS = {
   em_compra: 'ps-compra',
   pecas_recebidas: 'ps-receb',
   pronto_campo: 'ps-campo',
+  em_campo_f2: 'ps-campo',
   instalado_campo: 'ps-campo-inst',
   em_calibracao: 'ps-calib',
   calibrado: 'ps-cotado',
@@ -2285,6 +2311,7 @@ const NEXT_STATUS = {
   em_compra: ['pecas_recebidas'],
   pecas_recebidas: ['pronto_campo'],
   pronto_campo: ['em_calibracao','instalado'],
+  em_campo_f2: ['em_calibracao','instalado'],
   instalado_campo: ['em_calibracao','concluido'],
   em_calibracao: ['calibrado'],
   calibrado: ['instalado','concluido'],
@@ -3141,8 +3168,112 @@ function renderAll() {
   if (badge && DB.levantamentos?.length) badge.textContent = DB.levantamentos.length;
 }
 
-initDemoData();
-renderAll();
+// ═══════════════════════════════════════════════════════════════
+// S5 — FASE 2: RETORNO AO CAMPO
+// ═══════════════════════════════════════════════════════════════
+let _fase2OSContext = null;
+
+function abrirModalFase2(idOS) {
+  _fase2OSContext = idOS;
+  const os = DB.os.find(o => o.id_os === idOS);
+  document.getElementById('modal-f2-title').textContent =
+    'Abrir Fase 2 — OS ' + (os?.numero_os || idOS) + ' · ' + (os?.cliente || '');
+
+  // Filtra itens pronto_campo desta OS
+  const itensProntos = DB.itens
+    ? DB.itens.filter(it => it.id_os === idOS && it.status === 'pronto_campo')
+    : [];
+
+  const infoBox = document.getElementById('f2-info-box');
+  const list    = document.getElementById('f2-itens-list');
+
+  if (!itensProntos.length) {
+    infoBox.textContent = '⚠️ Nenhum item com status "Pronto p/ Campo" nesta OS. Avance os itens no Pipeline antes de abrir a Fase 2.';
+    list.innerHTML = '';
+    document.querySelector('#modal-fase2 .btn-primary').disabled = true;
+  } else {
+    infoBox.textContent = `${itensProntos.length} item${itensProntos.length > 1 ? 's' : ''} pronto${itensProntos.length > 1 ? 's' : ''} para envio ao campo:`;
+    document.querySelector('#modal-fase2 .btn-primary').disabled = false;
+
+    // Agrupar por TAG de equipamento
+    const byTag = {};
+    itensProntos.forEach(it => {
+      const k = it.tag_equipamento || it.id_equipamento || 'Sem TAG';
+      if (!byTag[k]) byTag[k] = [];
+      byTag[k].push(it);
+    });
+
+    list.innerHTML = Object.entries(byTag).map(([tag, items]) => `
+      <div style="margin-bottom:12px;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <div style="background:var(--surf2);padding:8px 12px;font-weight:700;font-size:13px;color:var(--text);border-bottom:1px solid var(--border)">
+          🔧 ${tag}
+        </div>
+        ${items.map(it => `
+          <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text)">${it.descricao_curta || '—'}</div>
+              <div style="font-size:11px;color:var(--text2)">Qtd: ${it.quantidade} · ${it.id_item}</div>
+            </div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              ${String(it.requer_calibracao) === 'true' ? '<span class="pill pill-warn" style="font-size:10px">Calib. NR-13</span>' : ''}
+              <span class="pill pill-ok" style="font-size:10px">✓ Pronto</span>
+            </div>
+          </div>`).join('')}
+      </div>`).join('');
+  }
+
+  document.getElementById('f2-obs').value = '';
+  openModal('modal-fase2');
+}
+
+async function confirmarFase2() {
+  const idOS = _fase2OSContext;
+  if (!idOS) return;
+  const obs = document.getElementById('f2-obs').value.trim();
+  const os  = DB.os.find(o => o.id_os === idOS);
+
+  showToast('Abrindo Fase 2…', 'warn');
+
+  // 1. Avança fase_atual da OS para 2 no GAS
+  if (GAS_URL) {
+    try {
+      const r = await gasPost('avancarFaseOS', { id_os: idOS, nova_fase: 2, observacao: obs });
+      if (r.status !== 'ok') { showToast('Erro ao avançar fase: ' + (r.mensagem || ''), 'err'); return; }
+    } catch(e) {
+      showToast('Falha na comunicação com GAS', 'err'); return;
+    }
+  }
+
+  // 2. Atualiza DB local
+  const idx = DB.os.findIndex(o => o.id_os === idOS);
+  if (idx >= 0) { DB.os[idx].status = 'Fase 2'; DB.os[idx].fase_atual = 2; }
+
+  // 3. Itens pronto_campo → status "em_campo_f2" para acompanhamento
+  if (DB.itens) {
+    const prontos = DB.itens.filter(it => it.id_os === idOS && it.status === 'pronto_campo');
+    prontos.forEach(it => { it.status = 'em_campo_f2'; });
+  }
+
+  closeModal('modal-fase2');
+  renderOS();
+  if (DB.itens) renderPipeline();
+  showToast('✅ Fase 2 aberta — FieldTap atualizado');
+}
+
+async function encerrarOS(idOS) {
+  if (!confirm('Confirma encerramento da OS ' + idOS + '? Esta ação não pode ser desfeita.')) return;
+  const idx = DB.os.findIndex(o => o.id_os === idOS);
+  if (GAS_URL) {
+    try {
+      await gasPost('avancarFaseOS', { id_os: idOS, nova_fase: 'encerrada' });
+    } catch(e) {}
+  }
+  if (idx >= 0) { DB.os[idx].status = 'Encerrada'; DB.os[idx].fase_atual = 'encerrada'; }
+  renderOS();
+  showToast('OS encerrada ✓');
+}
+
+
 
 // GAS connection attempt
 setTimeout(() => {
