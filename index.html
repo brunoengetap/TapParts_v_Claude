@@ -503,7 +503,11 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
           <option value="">Todos os status</option>
           <option value="Fase 1">Fase 1 — Levantamento</option>
           <option value="Fase 2">Fase 2 — Retorno</option>
+          <option value="Fase 2 Campo Concluída">Fase 2 — Campo Concluído</option>
           <option value="Encerrada">Encerrada</option>
+        </select>
+        <select class="filter-select" id="selOSCliente" onchange="filterOSCliente(this.value)">
+          <option value="">Todos os clientes</option>
         </select>
       </div>
       <div class="table-wrap">
@@ -813,6 +817,9 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
           <option value="">Todos os itens</option>
           <option value="sim">Requer calibração</option>
           <option value="nao">Sem calibração</option>
+        </select>
+        <select class="filter-select" id="pipe-cli-filter" onchange="renderPipeline()" style="min-width:160px">
+          <option value="">Todos os clientes</option>
         </select>
       </div>
       <div class="pipe-table-wrap">
@@ -1343,7 +1350,13 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
     </div>
     <div class="modal-body">
       <div class="info-box" id="f2-info-box">Itens prontos para campo nesta OS:</div>
-      <div id="f2-itens-list" style="margin:12px 0;max-height:340px;overflow-y:auto"></div>
+      <div id="f2-itens-list" style="margin:12px 0;max-height:280px;overflow-y:auto"></div>
+      <div class="field" style="margin-top:8px">
+        <label>Técnico responsável pela Fase 2 <span style="color:var(--text3);font-weight:400">(pode ser diferente da Fase 1)</span></label>
+        <select id="f2-tecnico-sel" style="width:100%;background:var(--surf2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);font-family:var(--body)">
+          <option value="">— Todos os técnicos verão (não restringir) —</option>
+        </select>
+      </div>
       <div class="field" style="margin-top:8px">
         <label>Observação para o campo (opcional)</label>
         <textarea id="f2-obs" rows="2" placeholder="Ex: Priorizar VP-01, calibração agendada para 10h..."></textarea>
@@ -1397,7 +1410,7 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
 // ═══════════════════════════════════════════════════════════════
 // GAS CONFIG — substitua pela URL real do Web App
 // ═══════════════════════════════════════════════════════════════
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbxGXse5zMb6J7sLyczwWkWf-N5PHcSw3Wp9LUiAzDD8qBgAaXy3omcPlsHsSNBUAYA/exec'; // TODO: colar URL do GAS aqui
+const GAS_URL = 'https://script.google.com/macros/s/AKfycby1Aa2timPdO-L8uRkgpO9LOLgJ1afS8tWiRqF8FzXDsA4AM35XG9oVrP_zrLfewRpO/exec'; // TODO: colar URL do GAS aqui
 
 // ═══════════════════════════════════════════════════════════════
 // ESTADO LOCAL (banco de dados em memória enquanto GAS não está conectado)
@@ -1576,7 +1589,16 @@ async function syncGAS() {
     ]);
     if (clis.status === 'ok')   DB.clientes     = clis.clientes;
     if (oss.status === 'ok')    DB.os           = oss.os;
-    if (equips.status === 'ok') DB.equipamentos = equips.equipamentos || DB.equipamentos;
+    if (equips.status === 'ok') {
+      DB.equipamentos = equips.equipamentos || DB.equipamentos;
+      // Enriquece campo cliente nos equipamentos
+      DB.equipamentos.forEach(e => {
+        if (!e.cliente || e.cliente === 'undefined') {
+          const cli = DB.clientes.find(c => c.id_cliente === e.id_cliente);
+          if (cli) e.cliente = cli.nome;
+        }
+      });
+    }
     if (insp.status === 'ok')   DB.inspetores   = insp.inspetores || [];
     if (cats.status === 'ok') {
       DB.catalogo.manometro = _mapCatItems(cats.manometros, 'Manômetro');
@@ -1706,19 +1728,34 @@ async function salvarCliente() {
 // ═══════════════════════════════════════════════════════════════
 // OS
 // ═══════════════════════════════════════════════════════════════
+let _osStatusFilter = '';
+let _osClienteFilter = '';
+
+function filterOSStatus(v) { _osStatusFilter = v; renderOS(); }
+function filterOSCliente(v) { _osClienteFilter = v; renderOS(); }
+
 function renderOS() {
   const tbody = document.getElementById('tbl-os');
   const q = (document.querySelector('#view-os input') || {}).value?.toLowerCase() || '';
-  let data = DB.os.filter(o => !q || o.numero_os?.includes(q) || o.cliente?.toLowerCase().includes(q) || o.descricao?.toLowerCase().includes(q));
+  let data = DB.os.filter(o => {
+    if (q && !o.numero_os?.includes(q) && !o.cliente?.toLowerCase().includes(q) && !o.descricao?.toLowerCase().includes(q)) return false;
+    if (_osStatusFilter && o.status !== _osStatusFilter) return false;
+    if (_osClienteFilter && o.id_cliente !== _osClienteFilter) return false;
+    return true;
+  });
   document.getElementById('cnt-os').textContent = data.length + ' OS';
   if (!data.length) {
     tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="ei">📋</div>Nenhuma OS encontrada</div></td></tr>';
     return;
   }
-  const phaseClass = { 'Fase 1':'phase-1','Fase 2':'phase-2','Encerrada':'phase-enc' };
+  const phaseClass = {
+    'Fase 1':'phase-1','Fase 2':'phase-2',
+    'Fase 2 Campo Concluída':'phase-2','Encerrada':'phase-enc'
+  };
   tbody.innerHTML = data.map(o => {
     const equipsVinc = DB.equipamentos.filter(e => e.id_os === o.id_os || e.id_os === o.numero_os);
     const eqCount = equipsVinc.length;
+    const isCampoConcluida = o.status === 'Fase 2 Campo Concluída';
     return `
     <tr>
       <td><code style="font-size:13px;font-weight:700">${o.numero_os}</code></td>
@@ -1731,7 +1768,10 @@ function renderOS() {
           <button class="btn btn-ghost btn-sm" onclick="abrirEquipamentosOS('${o.id_os}')" title="Gerenciar equipamentos">🔧</button>
         </div>
       </td>
-      <td><span class="phase-badge ${phaseClass[o.status]||'phase-1'}">${o.status}</span></td>
+      <td>
+        <span class="phase-badge ${phaseClass[o.status]||'phase-1'}">${o.status}</span>
+        ${isCampoConcluida ? '<div style="font-size:10px;color:var(--ok);font-weight:700;margin-top:2px">✅ Campo finalizado</div>' : ''}
+      </td>
       <td><span class="pill ${o.status==='Encerrada'?'pill-enc':'pill-f1'}">${o.status==='Encerrada'?'✓ Concluída':'🔄 Em andamento'}</span></td>
       <td>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
@@ -1739,14 +1779,13 @@ function renderOS() {
           <button class="btn btn-danger btn-sm" onclick="confirmarExclusao('os','${o.id_os}','OS '+o.numero_os)">🗑</button>
           ${(o.status !== 'Encerrada' && o.fase_atual != 'encerrada') ? `<button class="btn btn-primary btn-sm" onclick="abrirModalFase2('${o.id_os}')" title="Enviar itens prontos para o FieldTap (Fase 2)" style="font-size:11px;padding:3px 8px">🚗 Fase 2</button>` : ''}
           ${(o.status === 'Fase 2' || o.fase_atual == 2) ? `<button class="btn btn-ghost btn-sm" onclick="retrocederFase1('${o.id_os}')" title="Retroceder para Fase 1" style="font-size:11px;padding:3px 8px">↩ Fase 1</button>` : ''}
-          ${(o.status !== 'Encerrada' && o.fase_atual != 'encerrada') ? `<button class="btn btn-ghost btn-sm" onclick="encerrarOS('${o.id_os}')" title="Encerrar OS" style="font-size:11px;padding:3px 8px;border-color:var(--ok);color:var(--ok)">✅ Encerrar</button>` : ''}
+          ${isCampoConcluida ? `<button class="btn btn-ok btn-sm" onclick="encerrarOS('${o.id_os}')" style="font-size:11px;padding:3px 8px">✅ Encerrar OS</button>` : ''}
+          ${(o.status !== 'Encerrada' && o.fase_atual != 'encerrada' && !isCampoConcluida) ? `<button class="btn btn-ghost btn-sm" onclick="encerrarOS('${o.id_os}')" title="Encerrar OS" style="font-size:11px;padding:3px 8px;border-color:var(--ok);color:var(--ok)">✅ Encerrar</button>` : ''}
         </div>
       </td>
     </tr>`;
   }).join('');
 }
-
-function abrirModalOS(id=null) {
   document.getElementById('modal-os-title').textContent = id ? 'Editar OS' : 'Nova Ordem de Serviço';
   const o = id ? DB.os.find(x => x.id_os === id) : {};
   document.getElementById('os-id').value = id || '';
@@ -2077,14 +2116,7 @@ function fmtDateTime(ts) {
   } catch(e) { return ts; }
 }
 
-function filterOSStatus(v) {
-  const rows = document.querySelectorAll('#tbl-os tr');
-  rows.forEach(r => {
-    if (!v) { r.style.display = ''; return; }
-    const txt = r.textContent;
-    r.style.display = txt.includes(v) ? '' : 'none';
-  });
-}
+// filterOSStatus is defined above together with renderOS
 
 // ═══════════════════════════════════════════════════════════════
 // EQUIPAMENTOS
@@ -2092,16 +2124,35 @@ function filterOSStatus(v) {
 function renderEquipamentos() {
   const tbody = document.getElementById('tbl-equip');
   const q = (document.querySelector('#view-equipamentos input') || {}).value?.toLowerCase() || '';
-  const data = DB.equipamentos.filter(e => !q || e.tag?.toLowerCase().includes(q) || e.cliente?.toLowerCase().includes(q) || e.tipo?.toLowerCase().includes(q));
+  const tipoFilter = DB.equipamentos._tipoFilter || '';
+  const cliFilter  = DB.equipamentos._cliFilter  || '';
+
+  // Resolve nome do cliente a partir do id_cliente caso campo cliente esteja ausente
+  function _nomeCliente(e) {
+    if (e.cliente && e.cliente !== 'undefined') return e.cliente;
+    const cli = DB.clientes.find(c => c.id_cliente === e.id_cliente);
+    return cli ? cli.nome : '—';
+  }
+
+  let data = DB.equipamentos.filter(e => {
+    const nomeC = _nomeCliente(e);
+    if (q && !e.tag?.toLowerCase().includes(q) && !nomeC.toLowerCase().includes(q) && !e.tipo?.toLowerCase().includes(q)) return false;
+    if (tipoFilter && e.tipo !== tipoFilter) return false;
+    if (cliFilter  && e.id_cliente !== cliFilter) return false;
+    return true;
+  });
+
   document.getElementById('cnt-equip').textContent = data.length + ' equipamento' + (data.length !== 1 ? 's' : '');
   if (!data.length) {
     tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="ei">🔧</div>Nenhum equipamento encontrado</div></td></tr>';
     return;
   }
-  tbody.innerHTML = data.map(e => `
+  tbody.innerHTML = data.map(e => {
+    const nomeC = _nomeCliente(e);
+    return `
     <tr>
       <td><strong style="font-family:var(--head);font-size:16px">${e.tag}</strong></td>
-      <td>${e.cliente}</td>
+      <td>${nomeC}</td>
       <td><code style="font-size:11px">${e.id_os || '—'}</code></td>
       <td><span class="badge badge-blue">${e.tipo}</span></td>
       <td style="font-size:12px">${e.pmta ? e.pmta + ' kgf/cm²' : '—'}</td>
@@ -2112,7 +2163,8 @@ function renderEquipamentos() {
           <button class="btn btn-danger btn-sm" onclick="confirmarExclusao('equip','${e.id_equipamento}','${e.tag}')">🗑</button>
         </div>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 function populateOSByCliente(cliId) {
@@ -2872,6 +2924,7 @@ function renderPipeline() {
   const stFilter = document.getElementById('pipe-status-filter')?.value || '';
   const osFilter = document.getElementById('pipe-os-filter')?.value || '';
   const calibFilter = document.getElementById('pipe-calib-filter')?.value || '';
+  const cliFilter = document.getElementById('pipe-cli-filter')?.value || '';
 
   let data = DB.itens || [];
   if (q) data = data.filter(i =>
@@ -2882,6 +2935,10 @@ function renderPipeline() {
     i.id_item?.toLowerCase().includes(q));
   if (stFilter) data = data.filter(i => i.status === stFilter);
   if (osFilter) data = data.filter(i => i.id_os === osFilter);
+  if (cliFilter) data = data.filter(i => {
+    const os = DB.os.find(o => o.id_os === i.id_os);
+    return os ? os.id_cliente === cliFilter : false;
+  });
   if (calibFilter === 'sim') data = data.filter(i => i.requer_calibracao);
   if (calibFilter === 'nao') data = data.filter(i => !i.requer_calibracao);
 
@@ -3542,8 +3599,15 @@ async function syncItens() {
 // ═══════════════════════════════════════════════════════════════
 function populateClienteSelects() {
   const opts = DB.clientes.filter(c=>c.ativo).map(c=>`<option value="${c.id_cliente}">${c.nome}</option>`).join('');
+  // Filtro equipamentos
   const sel = document.getElementById('selEquipCliente');
   if (sel) sel.innerHTML = '<option value="">Todos os clientes</option>' + opts;
+  // Filtro OS
+  const selOS = document.getElementById('selOSCliente');
+  if (selOS) selOS.innerHTML = '<option value="">Todos os clientes</option>' + opts;
+  // Filtro Pipeline por cliente
+  const selPipeCli = document.getElementById('pipe-cli-filter');
+  if (selPipeCli) selPipeCli.innerHTML = '<option value="">Todos os clientes</option>' + opts;
 }
 
 function fmt(dateStr) {
@@ -3696,6 +3760,16 @@ function abrirModalFase2(idOS) {
   }
 
   document.getElementById('f2-obs').value = '';
+  // Popula seletor de técnico para a fase 2
+  const tecSel = document.getElementById('f2-tecnico-sel');
+  if (tecSel) {
+    tecSel.innerHTML = '<option value="">— Todos os técnicos verão (não restringir) —</option>' +
+      (DB.inspetores || []).filter(t => String(t.ativo) === 'true').map(t =>
+        `<option value="${t.id}">${t.nome}</option>`).join('');
+    // Pré-seleciona técnico já vinculado à OS (se único)
+    const tecsOS = os?.tecnicos_vinculados || [];
+    if (tecsOS.length === 1) tecSel.value = tecsOS[0];
+  }
   openModal('modal-fase2');
 }
 
@@ -3703,6 +3777,7 @@ async function confirmarFase2() {
   const idOS = _fase2OSContext;
   if (!idOS) return;
   const obs = document.getElementById('f2-obs').value.trim();
+  const tecnicoF2 = document.getElementById('f2-tecnico-sel')?.value || '';
   const os  = DB.os.find(o => o.id_os === idOS);
 
   showToast('Abrindo Fase 2…', 'warn');
@@ -3715,11 +3790,21 @@ async function confirmarFase2() {
     } catch(e) {
       showToast('Falha na comunicação com GAS', 'err'); return;
     }
+    // Se escolheu técnico específico, atualiza OS com técnico para fase 2
+    if (tecnicoF2 && GAS_URL) {
+      try {
+        await gasPost('salvarOS', { id_os: idOS, tecnicos_vinculados: [tecnicoF2] });
+      } catch(e) {}
+    }
   }
 
   // 2. Atualiza DB local
   const idx = DB.os.findIndex(o => o.id_os === idOS);
-  if (idx >= 0) { DB.os[idx].status = 'Fase 2'; DB.os[idx].fase_atual = 2; }
+  if (idx >= 0) {
+    DB.os[idx].status = 'Fase 2';
+    DB.os[idx].fase_atual = 2;
+    if (tecnicoF2) DB.os[idx].tecnicos_vinculados = [tecnicoF2];
+  }
 
   // 3. Itens pronto_campo → status "em_campo_f2" para acompanhamento
   if (DB.itens) {
@@ -3730,7 +3815,7 @@ async function confirmarFase2() {
   closeModal('modal-fase2');
   renderOS();
   if (DB.itens) renderPipeline();
-  showToast('✅ Fase 2 aberta — FieldTap atualizado');
+  showToast('✅ Fase 2 aberta — FieldTap atualizado' + (tecnicoF2 ? ' para técnico selecionado' : ''));
 }
 
 // Sprint 8: retroceder OS de Fase 2 para Fase 1
