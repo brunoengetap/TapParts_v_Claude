@@ -403,7 +403,7 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
     <div class="logo-badge">TAP</div>
     <div>
       <div class="logo-name">Parts</div>
-      <div class="logo-sub">Engetap · S17</div>
+      <div class="logo-sub">Engetap · S17.1</div>
     </div>
   </div>
 
@@ -455,7 +455,7 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
       <div class="gas-dot spin" id="gasDot"></div>
       <span id="gasLabel">Conectando ao GAS…</span>
     </div>
-    <div style="margin-top:6px;font-size:10px;opacity:.5">TapParts · S17</div>
+    <div style="margin-top:6px;font-size:10px;opacity:.5">TapParts · S17.1</div>
   </div>
 </div>
 
@@ -1419,8 +1419,8 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
 // GAS CONFIG — substitua pela URL real do Web App
 // ═══════════════════════════════════════════════════════════════
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrtYuEsGHDQ9n7UgnRSIFPOYomAcVe_NqcXZJ0--4q-ct5VaYp_IRrN_9kFE33v7Jv/exec'; // TODO: colar URL do GAS aqui
-// S17 — Correções cirúrgicas: dedup OS, snapshot levantamento, Fase 2 sync, tipo equipamento, dashboard
-const APP_VERSION = 'S17';
+// S17.1 — Hotfix Beta-RC1: isFase2→isOSFase2, split erro GAS/render, dashboard syncGAS
+const APP_VERSION = 'S17.1';
 
 // ═══════════════════════════════════════════════════════════════
 // ESTADO LOCAL (banco de dados em memória enquanto GAS não está conectado)
@@ -1683,8 +1683,17 @@ async function syncGAS() {
     setGASStatus('ok', 'GAS conectado ✓');
     await syncLevantamentos();
     await syncItens();
-    renderAll();
-    renderLevantamentos();
+    // [S17.1] FIX: separar erro de renderização local de erro de conexão GAS.
+    // Antes, qualquer erro lançado em renderAll/renderLevantamentos caía no
+    // catch externo e exibia "Erro ao conectar" — mesmo com dados OK do GAS.
+    try {
+      renderAll();
+      renderLevantamentos();
+    } catch (renderErr) {
+      console.error('[RENDER_ERROR]', renderErr);
+      showToast('Erro de renderização local: ' + renderErr.message, 'err');
+      return; // dados foram sincronizados; não exibir "sincronizado ✓" se renderização falhou
+    }
     showToast('Dados sincronizados com o GAS ✓');
   } catch(e) {
     setGASStatus('err', 'Erro de conexão');
@@ -3082,9 +3091,9 @@ function renderDashboard() {
         const pct = isOSEncerrada(o) ? pctBruto : Math.min(pctBruto, 95);
         // BUG5-FIX: label de status mais preciso
         const labelOS = isOSEncerrada(o) ? 'Encerrada' :
-          (isFase2(o) ? 'Fase 2 em campo' :
+          (isOSFase2(o) ? 'Fase 2 em campo' :
           (pct === 0 ? 'Aguardando pipeline' : `${pct}% concluído`));
-        const corBarra = isOSEncerrada(o) ? 'var(--ok)' : (isFase2(o) ? 'var(--warn)' : 'var(--accent)');
+        const corBarra = isOSEncerrada(o) ? 'var(--ok)' : (isOSFase2(o) ? 'var(--warn)' : 'var(--accent)');
         return `<div class="dash-item">
           <div>
             <div class="dash-item-label">OS ${o.numero_os} — ${o.cliente}</div>
@@ -3842,7 +3851,7 @@ function togOpt(el, group) {
 
 // ── VIEW SWITCHING ────────────────────────────────────────────
 const VIEW_CONFIG = {
-  dashboard:     { title: 'Dashboard',                   btnLabel: '🔄 Atualizar',        newFn: () => { renderDashboard(); showToast('Dashboard atualizado'); } },
+  dashboard:     { title: 'Dashboard',                   btnLabel: '🔄 Atualizar',        newFn: () => syncGAS() },
   pipeline:      { title: 'Pipeline de Itens',           btnLabel: '🔄 Atualizar tela',   newFn: () => { renderPipeline(); showToast('Pipeline atualizado na tela'); } },
   calibracao:    { title: 'Calibração e Lacre',          btnLabel: '🔬 Atualizar Calibrações',  newFn: () => syncGAS().then(renderCalibracao) },
   clientes:      { title: 'Clientes',                    btnLabel: '+ Novo Cliente',     newFn: () => abrirModalCliente() },
