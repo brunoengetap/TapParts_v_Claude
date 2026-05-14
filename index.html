@@ -403,7 +403,7 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
     <div class="logo-badge">TAP</div>
     <div>
       <div class="logo-name">Parts</div>
-      <div class="logo-sub">Engetap · S17.1</div>
+      <div class="logo-sub">Engetap · S17.2-Beta-RC1</div>
     </div>
   </div>
 
@@ -455,7 +455,7 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
       <div class="gas-dot spin" id="gasDot"></div>
       <span id="gasLabel">Conectando ao GAS…</span>
     </div>
-    <div style="margin-top:6px;font-size:10px;opacity:.5">TapParts · S17.1</div>
+    <div style="margin-top:6px;font-size:10px;opacity:.5">TapParts · S17.2-Beta-RC1</div>
   </div>
 </div>
 
@@ -1104,11 +1104,16 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
         <div class="field">
           <label>Bitola *</label>
           <select id="kit-bitola">
+            <option>1/8" NPT</option>
             <option>1/4" NPT</option>
             <option>3/8" NPT</option>
             <option>1/2" NPT</option>
             <option>3/4" NPT</option>
             <option>1" NPT</option>
+            <option>1 1/4" NPT</option>
+            <option>1 1/2" NPT</option>
+            <option>2" NPT</option>
+            <option>2 1/2" NPT</option>
           </select>
         </div>
         <div class="field">
@@ -1125,7 +1130,7 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
         <div style="font-size:11px;color:var(--text3);margin-top:4px">Liste os componentes em formato JSON array de strings</div>
       </div>
       <div class="field">
-        <label>Inclui reservatório de segurança (RS)?</label>
+        <label>Inclui no Registro de Segurança?</label>
         <div class="toggle-row">
           <div class="tog-opt sel" onclick="togOpt(this,'kit-rs')">Não</div>
           <div class="tog-opt" onclick="togOpt(this,'kit-rs')">Sim</div>
@@ -1418,9 +1423,9 @@ code { font-size: 11px; color: var(--accent); font-family: monospace; }
 // ═══════════════════════════════════════════════════════════════
 // GAS CONFIG — substitua pela URL real do Web App
 // ═══════════════════════════════════════════════════════════════
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrtYuEsGHDQ9n7UgnRSIFPOYomAcVe_NqcXZJ0--4q-ct5VaYp_IRrN_9kFE33v7Jv/exec'; // TODO: colar URL do GAS aqui
-// S17.1 — Hotfix Beta-RC1: isFase2→isOSFase2, split erro GAS/render, dashboard syncGAS
-const APP_VERSION = 'S17.1';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzaYkBqamEi21pTaBl_LYAhj9JkkxwFGfapWMrUCnfTCA7BMV9O5D0fWQeQP2fmGnKd/exec'; // TODO: colar URL do GAS aqui
+// S17.2-Beta-RC1 — Cliente nos levantamentos, remoção real, fix salvarItemCatalogo, bloqueio dups, Registro Segurança
+const APP_VERSION = 'S17.2-Beta-RC1';
 
 // ═══════════════════════════════════════════════════════════════
 // ESTADO LOCAL (banco de dados em memória enquanto GAS não está conectado)
@@ -1729,7 +1734,7 @@ function renderClientes() {
       <td>
         <div style="display:flex;gap:4px">
           <button class="btn btn-ghost btn-sm" onclick="editarCliente('${c.id_cliente}')">✏️ Editar</button>
-          <button class="btn btn-danger btn-sm" onclick="confirmarExclusao('cliente','${c.id_cliente}','${c.nome}')">🗑</button>
+          ${c.ativo ? `<button class="btn btn-danger btn-sm" onclick="confirmarExclusao('cliente','${c.id_cliente}','${(c.nome||'').replace(/'/g,'')}')">🗑</button>` : ''}
         </div>
       </td>
     </tr>`).join('');
@@ -1766,6 +1771,12 @@ async function salvarCliente() {
   if (GAS_URL) {
     try {
       const r = await gasPost('salvarCliente', obj);
+      // [DUPLICADO] S17 — destacar duplicidade com mensagem clara
+      if (r?.status === 'erro' && r?.codigo === 'DUPLICADO') {
+        const exist = r.existente || {};
+        showToast('Cadastro duplicado: ' + r.mensagem + (exist.id_cliente ? ' (ID existente: ' + exist.id_cliente + ')' : ''), 'err');
+        return;
+      }
       if (r.status !== 'ok') {
         showToast('Erro ao salvar cliente: ' + (r.mensagem || r.codigo || 'Falha na GAS'), 'err');
         return;
@@ -1916,6 +1927,12 @@ async function salvarOS() {
   if (GAS_URL) {
     try {
       const r = await gasPost('salvarOS', obj);
+      // [DUPLICADO] S17 — destacar duplicidade
+      if (r?.status === 'erro' && r?.codigo === 'DUPLICADO') {
+        const exist = r.existente || {};
+        showToast('OS duplicada: ' + r.mensagem + (exist.id_os ? ' (ID existente: ' + exist.id_os + ')' : ''), 'err');
+        return;
+      }
       if (r.status !== 'ok') {
         showToast('Erro ao salvar OS: ' + (r.mensagem || r.codigo || 'Falha na GAS'), 'err');
         return;
@@ -2065,8 +2082,21 @@ async function salvarEquipamentoDaOS() {
   if (GAS_URL) {
     try {
       const r = await gasPost('salvarEquipamento', obj);
-      if (r.status === 'ok') obj.id_equipamento = r.id_equipamento;
-    } catch(e) {}
+      // [DUPLICADO] S17 — bloquear push local se duplicado
+      if (r?.status === 'erro' && r?.codigo === 'DUPLICADO') {
+        const exist = r.existente || {};
+        showToast('Equipamento duplicado: ' + r.mensagem + (exist.tag ? ' (TAG existente: ' + exist.tag + ')' : ''), 'err');
+        return;
+      }
+      if (r?.status === 'ok') obj.id_equipamento = r.id_equipamento;
+      else if (r?.status === 'erro') {
+        showToast('Erro: ' + (r.mensagem || r.codigo), 'err');
+        return;
+      }
+    } catch(e) {
+      showToast('Erro de comunicação com GAS: ' + e.message, 'err');
+      return;
+    }
   }
   if (!obj.id_equipamento) obj.id_equipamento = 'EQ-' + String(DB.equipamentos.length + 1).padStart(3,'0');
   DB.equipamentos.push(obj);
@@ -2081,19 +2111,42 @@ async function salvarEquipamentoDaOS() {
 // ═══════════════════════════════════════════════════════════════
 // LEVANTAMENTOS
 // ═══════════════════════════════════════════════════════════════
+
+// [LEV_CLIENTE] S17 — helpers que toleram cliente/numero_os ausentes
+function clienteDoLevantamento(lev) {
+  if (!lev) return 'Cliente não identificado';
+  if (lev.cliente) return lev.cliente;
+  if (lev.nome_cliente) return lev.nome_cliente;
+  const os = (DB.os || []).find(o => String(o.id_os) === String(lev.id_os));
+  if (os && os.cliente) return os.cliente;
+  if (lev.id_cliente) {
+    const cli = (DB.clientes || []).find(c => String(c.id_cliente) === String(lev.id_cliente));
+    if (cli && cli.nome) return cli.nome;
+  }
+  return 'Cliente não identificado';
+}
+
+function numeroOSDoLevantamento(lev) {
+  if (!lev) return '—';
+  if (lev.numero_os) return lev.numero_os;
+  const os = (DB.os || []).find(o => String(o.id_os) === String(lev.id_os));
+  if (os && os.numero_os) return os.numero_os;
+  return lev.id_os || '—';
+}
+
 function renderLevantamentos() {
   const q = (document.getElementById('lev-search')?.value || '').toLowerCase();
   const osFilter = document.getElementById('lev-os-filter')?.value || '';
   const faseFilter = document.getElementById('lev-fase-filter')?.value || '';
   let data = DB.levantamentos || [];
   if (q) data = data.filter(l => {
-    const os = DB.os.find(o => o.id_os === l.id_os);
-    const clienteNome = (os?.cliente || '').toLowerCase();
-    return l.id_levantamento?.toLowerCase().includes(q) ||
-           l.id_os?.toLowerCase().includes(q) ||
-           l.nome_inspetor?.toLowerCase().includes(q) ||
-           clienteNome.includes(q) ||
-           (os?.numero_os || '').toLowerCase().includes(q);
+    const cliNome = clienteDoLevantamento(l).toLowerCase();
+    const numOS = String(numeroOSDoLevantamento(l)).toLowerCase();
+    return (l.id_levantamento||'').toLowerCase().includes(q) ||
+           (l.id_os||'').toLowerCase().includes(q) ||
+           (l.nome_inspetor||'').toLowerCase().includes(q) ||
+           cliNome.includes(q) ||
+           numOS.includes(q);
   });
   if (osFilter) data = data.filter(l => l.id_os === osFilter);
   if (faseFilter) data = data.filter(l => String(l.fase) === faseFilter);
@@ -2130,8 +2183,8 @@ function renderLevantamentos() {
     const chips = Object.entries(resumo).map(([k,v]) =>
       `<span class="status-chip ${STATUS_CLASS[k]||''}">${STATUS_PT[k]||k}: ${v}</span>`
     ).join('');
-    const os = DB.os.find(o => o.id_os === l.id_os);
-    const osLabel = os ? `OS ${os.numero_os || l.id_os} · ${os.cliente}` : `OS ${l.id_os}`;
+    // [LEV_CLIENTE] S17 — sempre mostra cliente via helpers (não confia em DB.os direto)
+    const osLabel = `OS ${numeroOSDoLevantamento(l)} · Cliente: ${clienteDoLevantamento(l)}`;
     const faseLabel = String(l.fase) === '2' ? '<span class="phase-badge phase-2" style="font-size:10px;padding:1px 6px">Fase 2</span>' : '<span class="phase-badge phase-1" style="font-size:10px;padding:1px 6px">Fase 1</span>';
     return `<div class="lev-card">
       <div class="lev-card-hdr">
@@ -2259,6 +2312,8 @@ function renderEquipamentos() {
   }
 
   let data = DB.equipamentos.filter(e => {
+    // [REMOVER_GAS] S17 — não exibir equipamentos inativados (compat com nova lógica de excluir())
+    if (e.ativo === false || String(e.ativo) === 'false') return false;
     const nomeC = _nomeCliente(e);
     if (q && !e.tag?.toLowerCase().includes(q) && !nomeC.toLowerCase().includes(q) && !e.tipo?.toLowerCase().includes(q)) return false;
     if (tipoFilter && e.tipo !== tipoFilter) return false;
@@ -2360,6 +2415,12 @@ async function salvarEquipamento() {
   if (GAS_URL) {
     try {
       const r = await gasPost('salvarEquipamento', obj);
+      // [DUPLICADO] S17 — destacar duplicidade
+      if (r?.status === 'erro' && r?.codigo === 'DUPLICADO') {
+        const exist = r.existente || {};
+        showToast('Equipamento duplicado: ' + r.mensagem + (exist.tag ? ' (TAG existente: ' + exist.tag + ')' : ''), 'err');
+        return;
+      }
       if (r.status !== 'ok') {
         showToast('Erro ao salvar equipamento: ' + (r.mensagem || r.codigo || 'Falha na GAS'), 'err');
         return;
@@ -2574,7 +2635,12 @@ function toggleAtivoCatalogo(id) {
   const item = arr.find(x => x.id === id);
   if (!item) return;
   item.ativo = !item.ativo;
-  if (GAS_URL) gasPost('toggleAtivoItem', { id, tipo: currentCatTab }).catch(()=>{});
+  // [REMOVER_GAS] S17 — passar tipo no plural (esperado pelo GAS) e o novo valor de ativo
+  if (GAS_URL) {
+    const mapaPlural = { manometro:'manometros', valvula:'valvulas', purgador:'purgadores', dcbi:'dcbi', conexao:'conexoes' };
+    const tipoGAS = mapaPlural[currentCatTab] || currentCatTab;
+    gasPost('toggleAtivoItem', { id, tipo: tipoGAS, ativo: String(!!item.ativo) }).catch(()=>{});
+  }
   renderCatalogo();
   showToast(`Item ${item.ativo ? 'ativado' : 'inativado'} ✓`);
 }
@@ -2586,6 +2652,12 @@ function editarItemCatalogo(id) {
 }
 
 // Form bodies por tipo
+// [CAT_FORMS_S17] expansões:
+//  - Manômetro: marca "Proper Compressores" + "Outra", escala "Personalizada" com 3 campos
+//  - Válvula: tipos entrada/saída, bitolas estendidas, fluido com especificação, marca "Outra"
+//  - Purgador: Eletrônico, sem Termostático/Disco, bitola 1/4", marca "Outra"
+//  - DCBI: bitolas estendidas
+//  - Conexão: tipos estendidos com "Outro", bitola manual + unidade, material "Outro"
 const catForms = {
   manometro: (item={}) => `
     <div class="field">
@@ -2623,10 +2695,28 @@ const catForms = {
       <select id="cat-escala">
         ${['0 a 4 kgf/cm²','0 a 6 kgf/cm²','0 a 10 kgf/cm²','0 a 14 kgf/cm²','0 a 21 kgf/cm²','0 a 28 kgf/cm²','0 a 40 kgf/cm²','-1 a 0 kgf/cm² (Vacuômetro)','-1 a 1 kgf/cm² (Manovacuômetro)','Personalizada'].map(s=>`<option>${s}</option>`).join('')}
       </select>
+      <div id="cat-escala-custom" style="display:none;margin-top:8px;padding:8px;background:rgba(0,0,0,.03);border-radius:6px">
+        <div class="field-row">
+          <div class="field"><label>Início</label><input type="text" id="cat-escala-ini" placeholder="0" value=""></div>
+          <div class="field"><label>Fim</label><input type="text" id="cat-escala-fim" placeholder="14" value=""></div>
+          <div class="field"><label>Unidade</label>
+            <select id="cat-escala-uni">
+              <option>kgf/cm²</option><option>bar</option><option>PSI</option><option>MPa</option><option>kPa</option>
+            </select>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="field-row">
       <div class="field"><label>Marca</label>
-        <select id="cat-marca"><option ${item.marca==='Wika'?'selected':''}>Wika</option><option ${item.marca==='Genebre'?'selected':''}>Genebre</option><option ${item.marca==='Pressure'?'selected':''}>Pressure</option><option>Outra</option></select>
+        <select id="cat-marca">
+          <option ${item.marca==='Wika'?'selected':''}>Wika</option>
+          <option ${item.marca==='Genebre'?'selected':''}>Genebre</option>
+          <option ${item.marca==='Pressure'?'selected':''}>Pressure</option>
+          <option ${item.marca==='Proper Compressores'?'selected':''}>Proper Compressores</option>
+          <option>Outra</option>
+        </select>
+        <input type="text" id="cat-marca-outra" placeholder="Informe a marca" style="display:none;margin-top:6px" value="${item.marca && !['Wika','Genebre','Pressure','Proper Compressores'].includes(item.marca) ? item.marca : ''}">
       </div>
       <div class="field"><label>Modelo (opcional)</label>
         <input type="text" id="cat-modelo" placeholder="Ex: 212.20" value="${item.modelo||''}">
@@ -2643,23 +2733,40 @@ const catForms = {
   valvula: (item={}) => `
     <div class="field-row">
       <div class="field"><label>Bitola de entrada</label>
-        <select id="cat-bit-ent">${['1/4"','3/8"','1/2"','3/4"','1"'].map(s=>`<option>${s}</option>`).join('')}</select>
+        <select id="cat-bit-ent">${['1/8"','1/4"','3/8"','1/2"','3/4"','1"','1 1/4"','1 1/2"','2"','2 1/2"'].map(s=>`<option>${s}</option>`).join('')}</select>
       </div>
+      <div class="field"><label>Tipo de entrada</label>
+        <div class="toggle-row">
+          <div class="tog-opt sel" onclick="togOpt(this,'cat-tip-ent-v')">Roscada</div>
+          <div class="tog-opt" onclick="togOpt(this,'cat-tip-ent-v')">Flangeada</div>
+        </div>
+      </div>
+    </div>
+    <div class="field-row">
       <div class="field"><label>Bitola de saída</label>
-        <select id="cat-bit-sai">${['1/4"','3/8"','1/2"','3/4"','1"'].map(s=>`<option>${s}</option>`).join('')}</select>
+        <select id="cat-bit-sai">${['1/8"','1/4"','3/8"','1/2"','3/4"','1"','1 1/4"','1 1/2"','2"','2 1/2"'].map(s=>`<option>${s}</option>`).join('')}</select>
+      </div>
+      <div class="field"><label>Tipo de saída</label>
+        <div class="toggle-row">
+          <div class="tog-opt sel" onclick="togOpt(this,'cat-tip-sai-v')">Roscada</div>
+          <div class="tog-opt" onclick="togOpt(this,'cat-tip-sai-v')">Flangeada</div>
+          <div class="tog-opt" onclick="togOpt(this,'cat-tip-sai-v')">Difusa</div>
+        </div>
       </div>
     </div>
     <div class="field-row">
       <div class="field"><label>Fluido</label>
         <div class="toggle-row">
-          <div class="tog-opt sel" onclick="togOpt(this,'cat-fluido-v')">AR</div>
-          <div class="tog-opt" onclick="togOpt(this,'cat-fluido-v')">Vapor</div>
-          <div class="tog-opt" onclick="togOpt(this,'cat-fluido-v')">Gás</div>
-          <div class="tog-opt" onclick="togOpt(this,'cat-fluido-v')">Líquido</div>
+          <div class="tog-opt sel" onclick="_togFluidoValv(this)">AR</div>
+          <div class="tog-opt" onclick="_togFluidoValv(this)">Vapor</div>
+          <div class="tog-opt" onclick="_togFluidoValv(this)">Gás</div>
+          <div class="tog-opt" onclick="_togFluidoValv(this)">Líquido</div>
+          <div class="tog-opt" onclick="_togFluidoValv(this)">Outros</div>
         </div>
+        <input type="text" id="cat-flu-esp-v" placeholder="Especificar fluido" style="display:none;margin-top:6px">
       </div>
       <div class="field"><label>Pressão de abertura (PA) — kgf/cm²</label>
-        <input type="number" id="cat-pa" step="0.5" placeholder="Ex: 10.0" value="${item.pa||''}">
+        <input type="number" id="cat-pa" step="0.5" placeholder="Ex: 10.0" value="${item.pa_kgf||item.pa||''}">
       </div>
     </div>
     <div class="field-row">
@@ -2671,7 +2778,12 @@ const catForms = {
         </div>
       </div>
       <div class="field"><label>Marca</label>
-        <select id="cat-marca-v"><option>Leser</option><option>Swagelok</option><option>Herose</option><option>Outra</option></select>
+        <select id="cat-marca-v">
+          <option>Leser</option><option>Swagelok</option><option>Herose</option>
+          <option>Fluid Controls</option>
+          <option>Outra</option>
+        </select>
+        <input type="text" id="cat-marca-v-outra" placeholder="Informe a marca" style="display:none;margin-top:6px">
       </div>
     </div>
     <div class="field"><label>Modelo (opcional)</label>
@@ -2681,15 +2793,14 @@ const catForms = {
   purgador: (item={}) => `
     <div class="field"><label>Tipo de purgador</label>
       <div class="toggle-row">
-        <div class="tog-opt sel" onclick="togOpt(this,'cat-tip-pur')">Termodinâmico</div>
-        <div class="tog-opt" onclick="togOpt(this,'cat-tip-pur')">Boia</div>
-        <div class="tog-opt" onclick="togOpt(this,'cat-tip-pur')">Termostático</div>
-        <div class="tog-opt" onclick="togOpt(this,'cat-tip-pur')">Disco</div>
+        <div class="tog-opt ${(item.tipo||'Termodinâmico')==='Termodinâmico'?'sel':''}" onclick="togOpt(this,'cat-tip-pur')">Termodinâmico</div>
+        <div class="tog-opt ${item.tipo==='Boia'?'sel':''}" onclick="togOpt(this,'cat-tip-pur')">Boia</div>
+        <div class="tog-opt ${item.tipo==='Eletrônico'?'sel':''}" onclick="togOpt(this,'cat-tip-pur')">Eletrônico</div>
       </div>
     </div>
     <div class="field-row">
       <div class="field"><label>Bitola</label>
-        <select id="cat-bit-pur">${['1/2"','3/4"','1"','1.1/2"'].map(s=>`<option>${s}</option>`).join('')}</select>
+        <select id="cat-bit-pur">${['1/4"','1/2"','3/4"','1"','1.1/2"'].map(s=>`<option ${item.bitola===s?'selected':''}>${s}</option>`).join('')}</select>
       </div>
       <div class="field"><label>PN (pressão nominal)</label>
         <select id="cat-pn-pur"><option>PN16</option><option>PN25</option><option>PN40</option><option>PN63</option></select>
@@ -2701,6 +2812,7 @@ const catForms = {
     <div class="field-row">
       <div class="field"><label>Marca</label>
         <select id="cat-marca-pur"><option>Spirax</option><option>Armstrong</option><option>TLV</option><option>Outra</option></select>
+        <input type="text" id="cat-marca-pur-outra" placeholder="Informe a marca" style="display:none;margin-top:6px">
       </div>
       <div class="field"><label>Modelo</label>
         <input type="text" id="cat-mod-pur" placeholder="Modelo" value="${item.modelo||''}">
@@ -2710,36 +2822,97 @@ const catForms = {
   dcbi: (item={}) => `
     <div class="info-box">ℹ️ DCBI = Dispositivo Contra Bloqueio Inadvertido. Composto por válvula tripartida + niples + joelho + lacre de segurança.</div>
     <div class="field"><label>Bitola de conexão *</label>
-      <div class="toggle-row">
-        ${['1/4" NPT','3/8" NPT','1/2" NPT','3/4" NPT'].map(s=>`<div class="tog-opt ${(item.badges||[]).includes(s.replace(' NPT',''))?'sel':''}" onclick="togOpt(this,'cat-bit-dcbi')">${s}</div>`).join('')}
+      <div class="toggle-row" style="flex-wrap:wrap">
+        ${['1/8" NPT','1/4" NPT','3/8" NPT','1/2" NPT','3/4" NPT','1" NPT','1 1/4" NPT','1 1/2" NPT','2" NPT','2 1/2" NPT'].map(s=>`<div class="tog-opt ${item.bitola===s?'sel':''}" onclick="togOpt(this,'cat-bit-dcbi')">${s}</div>`).join('')}
       </div>
     </div>
     <div class="field"><label>Componentes (JSON)</label>
-      <textarea id="cat-comp-dcbi" rows="4" placeholder='["Válvula agulha 1/4" (x3)", "Niple 1/4" (x2)", "Joelho 90°", "Lacre de segurança"]'>${item.componentes_json||''}</textarea>
+      <textarea id="cat-comp-dcbi" rows="4" placeholder='["Válvula agulha 1/4&quot; (x3)", "Niple 1/4&quot; (x2)", "Joelho 90°", "Lacre de segurança"]'>${item.componentes_json||(Array.isArray(item.componentes)?JSON.stringify(item.componentes):'')}</textarea>
     </div>`,
 
   conexao: (item={}) => `
     <div class="field"><label>Tipo de conexão *</label>
-      <div class="toggle-row">
-        ${['Niple','Joelho','Bucha redutora','Tê','União','Plug'].map(s=>`<div class="tog-opt ${item.tipo===s?'sel':''}" onclick="togOpt(this,'cat-tip-con')">${s}</div>`).join('')}
+      <div class="toggle-row" style="flex-wrap:wrap">
+        ${['Niple','Joelho','Bucha redutora','Luva','União','Tê','Plug','Tampão','Adaptador','Espigão','Cotovelo','Cruzeta','Redução','Flange','Válvula esfera','Outro'].map(s=>`<div class="tog-opt ${item.tipo===s?'sel':''}" onclick="_togTipoConexao(this)">${s}</div>`).join('')}
       </div>
+      <input type="text" id="cat-tip-con-outro" placeholder="Informe o tipo de conexão" style="display:none;margin-top:6px">
     </div>
     <div class="field-row">
-      <div class="field"><label>Bitola</label>
-        <select id="cat-bit-con">${['1/8"','1/4"','3/8"','1/2"','3/4"','1"','1.1/4"','1.1/2"','2"'].map(s=>`<option>${s} NPT</option>`).join('')}</select>
+      <div class="field"><label>Bitola (lista)</label>
+        <select id="cat-bit-con">
+          <option value="">(usar manual)</option>
+          ${['1/8" NPT','1/4" NPT','3/8" NPT','1/2" NPT','3/4" NPT','1" NPT','1 1/4" NPT','1 1/2" NPT','2" NPT','2 1/2" NPT'].map(s=>`<option>${s}</option>`).join('')}
+        </select>
       </div>
-      <div class="field"><label>Material</label>
-        <div class="toggle-row">
-          <div class="tog-opt sel" onclick="togOpt(this,'cat-mat-con')">Galv.</div>
-          <div class="tog-opt" onclick="togOpt(this,'cat-mat-con')">Inox</div>
-          <div class="tog-opt" onclick="togOpt(this,'cat-mat-con')">Bronze</div>
-        </div>
+      <div class="field"><label>Bitola manual</label>
+        <input type="text" id="cat-bit-con-manual" placeholder='Ex: 10 ou 1/4"'>
+      </div>
+      <div class="field"><label>Unidade</label>
+        <select id="cat-bit-con-uni">
+          <option>polegada</option><option>mm</option>
+        </select>
       </div>
     </div>
-    <div class="field"><label>Descrição curta *</label>
-      <input type="text" id="cat-desc-con" placeholder="Ex: Niple 1/4\" NPT Galv. L=50mm" value="${item.desc_curta||''}">
+    <div class="field"><label>Material</label>
+      <div class="toggle-row" style="flex-wrap:wrap">
+        <div class="tog-opt sel" onclick="_togMatConexao(this)">Galv.</div>
+        <div class="tog-opt" onclick="_togMatConexao(this)">Inox</div>
+        <div class="tog-opt" onclick="_togMatConexao(this)">Bronze</div>
+        <div class="tog-opt" onclick="_togMatConexao(this)">Latão</div>
+        <div class="tog-opt" onclick="_togMatConexao(this)">Alumínio</div>
+        <div class="tog-opt" onclick="_togMatConexao(this)">Aço carbono</div>
+        <div class="tog-opt" onclick="_togMatConexao(this)">Outro</div>
+      </div>
+      <input type="text" id="cat-mat-con-outro" placeholder="Informe o material" style="display:none;margin-top:6px">
     </div>`
 };
+
+// [CAT_FORMS_S17] auxiliares de toggle com side-effects para mostrar campos "Outro"/"Especificar"
+function _togFluidoValv(el) {
+  togOpt(el, 'cat-fluido-v');
+  const val = el.textContent.trim();
+  const esp = document.getElementById('cat-flu-esp-v');
+  if (esp) {
+    const precisa = ['Gás','Líquido','Outros'].includes(val);
+    esp.style.display = precisa ? 'block' : 'none';
+    if (!precisa) esp.value = '';
+  }
+}
+function _togTipoConexao(el) {
+  togOpt(el, 'cat-tip-con');
+  const inp = document.getElementById('cat-tip-con-outro');
+  if (inp) inp.style.display = (el.textContent.trim() === 'Outro') ? 'block' : 'none';
+}
+function _togMatConexao(el) {
+  togOpt(el, 'cat-mat-con');
+  const inp = document.getElementById('cat-mat-con-outro');
+  if (inp) inp.style.display = (el.textContent.trim() === 'Outro') ? 'block' : 'none';
+}
+function _setupCatModalListeners() {
+  // marca "Outra" (manômetro, válvula, purgador)
+  const pares = [
+    ['cat-marca','cat-marca-outra'],
+    ['cat-marca-v','cat-marca-v-outra'],
+    ['cat-marca-pur','cat-marca-pur-outra']
+  ];
+  pares.forEach(([selId, inpId]) => {
+    const sel = document.getElementById(selId);
+    const inp = document.getElementById(inpId);
+    if (sel && inp) {
+      const upd = () => { inp.style.display = sel.value === 'Outra' ? 'block' : 'none'; };
+      sel.addEventListener('change', upd);
+      upd();
+    }
+  });
+  // escala personalizada (manômetro)
+  const selEsc = document.getElementById('cat-escala');
+  const wrapEsc = document.getElementById('cat-escala-custom');
+  if (selEsc && wrapEsc) {
+    const upd = () => { wrapEsc.style.display = selEsc.value === 'Personalizada' ? 'block' : 'none'; };
+    selEsc.addEventListener('change', upd);
+    upd();
+  }
+}
 
 function abrirModalCatalogo(item=null) {
   const labels = { manometro:'Manômetro', valvula:'Válvula de Segurança', purgador:'Purgador', dcbi:'DCBI', conexao:'Conexão' };
@@ -2747,51 +2920,206 @@ function abrirModalCatalogo(item=null) {
   document.getElementById('modal-cat-body').innerHTML = (catForms[currentCatTab] || (() => '<p>Formulário em breve</p>'))(item || {});
   document.getElementById('modal-cat-body').dataset.editId = item?.id || '';
   openModal('modal-catalogo');
+  // [CAT_FORMS_S17] ativar listeners após o HTML estar no DOM
+  setTimeout(_setupCatModalListeners, 0);
 }
 
+// [SALVAR_CAT_FIX] S17 — extração correta por tipo, aguarda GAS, trata DUPLICADO,
+// usa id retornado pelo GAS (não gera id no client para evitar colisão).
 async function salvarItemCatalogo() {
-  const editId = document.getElementById('modal-cat-body').dataset.editId;
-  const arr = DB.catalogo[currentCatTab];
-  const newId = editId || currentCatTab.toUpperCase().slice(0,3) + '-' + String(arr.length + 1).padStart('3','0');
-  // Extrai campos comuns (simplificado — em produção cada tipo extrai seus campos)
-  let nome = '', detalhe = '', badges = [], calib = false, marca = '';
-  if (currentCatTab === 'manometro') {
+  const editId = document.getElementById('modal-cat-body').dataset.editId || '';
+  const tipo = currentCatTab; // 'manometro' | 'valvula' | 'purgador' | 'dcbi' | 'conexao'
+  const arr = DB.catalogo[tipo];
+  if (!Array.isArray(arr)) { showToast('Aba de catálogo inválida: ' + tipo, 'err'); return; }
+
+  // Construção do payload por tipo (alinhado aos cabeçalhos das abas do GAS)
+  let payload = { tipo, ativo: 'true' };
+  if (editId) payload.id = editId;
+
+  // ─── MANÔMETRO ───────────────────────────────────────────────
+  if (tipo === 'manometro') {
     const subtipo = getTogVal('cat-subtipo') || 'Manômetro';
-    const fluido = getTogVal('cat-fluido') || 'Glicerinado';
-    const rosca = getTogVal('cat-rosca') || '1/4" NPT';
+    const fluido  = getTogVal('cat-fluido')  || 'Glicerinado';
+    const rosca   = getTogVal('cat-rosca')   || '1/4" NPT';
     const entrada = getTogVal('cat-entrada') || 'Reta';
-    const caixa = document.getElementById('cat-caixa')?.value || '100 mm';
-    const escala = document.getElementById('cat-escala')?.value || '';
-    const escShort = escala.replace('kgf/cm²','kgf').split('(')[0].trim();
-    marca = document.getElementById('cat-marca')?.value || 'Wika';
-    calib = getTogVal('cat-calib') === 'Sim';
-    nome = `${subtipo} ${fluido} ${caixa}${entrada==='Angular'?' Angular':''}`;
-    detalhe = `${rosca} · ${entrada} · ${escShort}`;
-    badges = [fluido, caixa, rosca, escShort].filter(Boolean);
-  } else if (currentCatTab === 'valvula') {
-    const bitE = document.getElementById('cat-bit-ent')?.value || '1/2"';
-    const fluido = getTogVal('cat-fluido-v') || 'AR';
-    const pa = document.getElementById('cat-pa')?.value || '';
+    const caixaTxt = document.getElementById('cat-caixa')?.value || '100 mm';
+    const caixaMm = String(caixaTxt).replace(/[^0-9]/g, '') || '100';
+    let escala = document.getElementById('cat-escala')?.value || '0 a 14 kgf/cm²';
+    // Escala personalizada
+    if (escala === 'Personalizada') {
+      const ei = document.getElementById('cat-escala-ini')?.value?.trim();
+      const ef = document.getElementById('cat-escala-fim')?.value?.trim();
+      const eu = document.getElementById('cat-escala-uni')?.value || 'kgf/cm²';
+      if (!ei || !ef) { showToast('Preencha início e fim da escala personalizada', 'err'); return; }
+      escala = `${ei}-${ef} ${eu}`;
+    }
+    let marca = document.getElementById('cat-marca')?.value || 'Wika';
+    if (marca === 'Outra') {
+      const outra = document.getElementById('cat-marca-outra')?.value?.trim();
+      if (!outra) { showToast('Informe a marca quando selecionar Outra', 'err'); return; }
+      marca = outra;
+    }
+    const calib = getTogVal('cat-calib') === 'Sim' ? 'true' : 'false';
+    const modelo = document.getElementById('cat-modelo')?.value?.trim() || '';
+
+    payload.tipo_subtipo = subtipo; // descartado abaixo; só uso interno
+    payload.fluido        = fluido;
+    payload.caixa_mm      = caixaMm;
+    payload.rosca         = rosca;
+    payload.tipo_rosca    = 'NPT';
+    payload.entrada       = entrada;
+    payload.escala_padrao = escala;
+    payload.marca         = marca;
+    payload.modelo        = modelo;
+    payload.requer_calibracao = calib;
+    payload.desc_curta    = `${subtipo} ${fluido} ${caixaMm}mm · ${rosca} · ${entrada} · ${escala} · ${marca}${modelo ? ' ' + modelo : ''}`;
+    // [SALVAR_CAT_FIX] valor real da coluna "tipo" da aba CAT_MANOMETROS = subtipo (Manômetro/Vacuômetro/Manovacuômetro)
+    payload._tipo_dado = subtipo;
+  }
+
+  // ─── VÁLVULA ─────────────────────────────────────────────────
+  else if (tipo === 'valvula') {
+    const bitE   = document.getElementById('cat-bit-ent')?.value || '1/2"';
+    const bitS   = document.getElementById('cat-bit-sai')?.value || '1/2"';
+    const tipoE  = getTogVal('cat-tip-ent-v') || 'Roscada';
+    const tipoS  = getTogVal('cat-tip-sai-v') || 'Roscada';
+    let fluido   = getTogVal('cat-fluido-v')  || 'AR';
+    if (fluido === 'Gás' || fluido === 'Líquido' || fluido === 'Outros') {
+      const esp = document.getElementById('cat-flu-esp-v')?.value?.trim();
+      if (!esp) { showToast('Especifique o fluido (' + fluido + ')', 'err'); return; }
+      fluido = (fluido === 'Outros') ? esp : (fluido + ': ' + esp);
+    }
+    const pa  = document.getElementById('cat-pa')?.value || '';
     const mat = getTogVal('cat-mat') || 'Aço inox';
-    marca = document.getElementById('cat-marca-v')?.value || 'Leser';
-    nome = `Válvula de Segurança ${bitE} ${fluido}`;
-    detalhe = `PA=${pa} kgf · ${mat} · ${marca}`;
-    badges = [bitE, fluido, pa ? pa+' kgf' : '', mat].filter(Boolean);
-    calib = true;
-  } else {
-    nome = 'Novo item ' + currentCatTab;
-    detalhe = '';
-    badges = [];
+    let marca = document.getElementById('cat-marca-v')?.value || 'Leser';
+    if (marca === 'Outra') {
+      const outra = document.getElementById('cat-marca-v-outra')?.value?.trim();
+      if (!outra) { showToast('Informe a marca quando selecionar Outra', 'err'); return; }
+      marca = outra;
+    }
+    const modelo = document.getElementById('cat-modelo-v')?.value?.trim() || '';
+
+    // Aba CAT_VALVULAS não tem colunas separadas tipo_entrada/tipo_saida.
+    // Estratégia compatível: concatenar tipo na própria bitola.
+    payload.bitola_ent = `${bitE} ${tipoE}`;
+    payload.bitola_sai = `${bitS} ${tipoS}`;
+    payload.fluido     = fluido;
+    payload.pa_kgf     = pa;
+    payload.material   = mat;
+    payload.marca      = marca;
+    payload.modelo     = modelo;
+    payload.requer_calibracao = 'true';
+    payload.desc_curta = `Válvula ${bitE} ${tipoE}→${bitS} ${tipoS} · ${fluido} · PA=${pa}kgf · ${mat} · ${marca}${modelo ? ' ' + modelo : ''}`;
   }
-  const obj = { id: newId, nome, detalhe, marca, badges, calib, ativo: true, tipo: nome.split(' ')[0] };
-  if (GAS_URL) {
-    try { await gasPost('salvarItemCatalogo', { tipo: currentCatTab, ...obj }); } catch(e) {}
+
+  // ─── PURGADOR ────────────────────────────────────────────────
+  else if (tipo === 'purgador') {
+    const tipoP = getTogVal('cat-tip-pur') || 'Termodinâmico';
+    const bit   = document.getElementById('cat-bit-pur')?.value || '1/2"';
+    const pn    = document.getElementById('cat-pn-pur')?.value  || 'PN16';
+    const flu   = document.getElementById('cat-flu-pur')?.value?.trim() || 'Vapor';
+    let marca   = document.getElementById('cat-marca-pur')?.value || 'Spirax';
+    if (marca === 'Outra') {
+      const outra = document.getElementById('cat-marca-pur-outra')?.value?.trim();
+      if (!outra) { showToast('Informe a marca quando selecionar Outra', 'err'); return; }
+      marca = outra;
+    }
+    const modelo = document.getElementById('cat-mod-pur')?.value?.trim() || '';
+    // Aba CAT_PURGADORES: id, tipo, bitola, fluido, desc_curta, ativo. Marca/modelo/pn vão em desc_curta.
+    payload._tipo_dado = tipoP; // [SALVAR_CAT_FIX] coluna "tipo" recebe "Termodinâmico"/"Boia"/"Eletrônico"
+    payload.bitola = bit;
+    payload.fluido = flu;
+    payload.desc_curta = `Purgador ${tipoP} ${bit} ${pn} · ${flu} · ${marca}${modelo ? ' ' + modelo : ''}`;
   }
-  if (editId) { const i = arr.findIndex(x => x.id === editId); if (i>=0) arr[i] = { ...arr[i], ...obj }; }
-  else arr.push(obj);
-  closeModal('modal-catalogo');
-  renderCatalogo();
-  showToast('Item salvo no catálogo ✓');
+
+  // ─── DCBI ────────────────────────────────────────────────────
+  else if (tipo === 'dcbi') {
+    const bit = getTogVal('cat-bit-dcbi') || '1/2" NPT';
+    let comp = [];
+    try { comp = JSON.parse(document.getElementById('cat-comp-dcbi')?.value || '[]'); }
+    catch(e) { showToast('JSON de componentes inválido', 'err'); return; }
+    payload.bitola = bit;
+    payload.componentes = comp;
+    payload.desc_curta  = `DCBI ${bit} — ${comp.length} componente${comp.length!==1?'s':''}`;
+  }
+
+  // ─── CONEXÃO ─────────────────────────────────────────────────
+  else if (tipo === 'conexao') {
+    let tipoC = getTogVal('cat-tip-con') || 'Niple';
+    if (tipoC === 'Outro') {
+      const outro = document.getElementById('cat-tip-con-outro')?.value?.trim();
+      if (!outro) { showToast('Informe o tipo de conexão', 'err'); return; }
+      tipoC = outro;
+    }
+    const bitSel    = document.getElementById('cat-bit-con')?.value || '';
+    const bitManual = document.getElementById('cat-bit-con-manual')?.value?.trim() || '';
+    const unidade   = document.getElementById('cat-bit-con-uni')?.value || 'polegada';
+    let bit = bitManual || bitSel || '1/4" NPT';
+    if (bitManual && unidade === 'mm' && !/mm/i.test(bitManual)) bit = bitManual + ' mm';
+    let mat = getTogVal('cat-mat-con') || 'Galv.';
+    if (mat === 'Outro') {
+      const outro = document.getElementById('cat-mat-con-outro')?.value?.trim();
+      if (!outro) { showToast('Informe o material', 'err'); return; }
+      mat = outro;
+    }
+    payload._tipo_dado = tipoC; // [SALVAR_CAT_FIX] coluna "tipo" recebe "Niple"/"Joelho"/etc
+    payload.bitola   = bit;
+    payload.material = mat;
+    payload.desc_curta = `${tipoC} ${bit} ${mat}`;
+  }
+
+  // ─── ENVIO ───────────────────────────────────────────────────
+  // Helper para reconstruir objeto local após sucesso usando _mapCatItems
+  const construirObjLocal = (id) => {
+    const bruto = { ...payload, id };
+    // Substitui o roteador pelo valor real da coluna "tipo" no objeto local
+    if (payload._tipo_dado) bruto.tipo = payload._tipo_dado;
+    delete bruto._tipo_dado;
+    delete bruto.tipo_subtipo;
+    delete bruto.tipo_aba;
+    const tipoDefault = { manometro:'Manômetro', valvula:'Válvula de Segurança', purgador:'Purgador', dcbi:'DCBI', conexao:'Conexão' }[tipo];
+    return _mapCatItems([bruto], tipoDefault)[0];
+  };
+
+  // limpa campos auxiliares antes de enviar (NÃO remove _tipo_dado — GAS precisa)
+  delete payload.tipo_subtipo;
+  delete payload.tipo_aba;
+
+  if (!GAS_URL) {
+    // Modo local — gera id local
+    const idLocal = editId || (tipo.toUpperCase().slice(0,3) + '-' + String(arr.length + 1).padStart(3,'0'));
+    const objLocal = construirObjLocal(idLocal);
+    if (editId) { const i = arr.findIndex(x => x.id === editId); if (i>=0) arr[i] = objLocal; }
+    else arr.push(objLocal);
+    closeModal('modal-catalogo');
+    renderCatalogo();
+    showToast('Item salvo localmente ✓ (GAS offline)', 'warn');
+    return;
+  }
+
+  try {
+    const r = await gasPost('salvarItemCatalogo', payload);
+    if (r?.status === 'erro' && r?.codigo === 'DUPLICADO') {
+      const exist = r.existente || {};
+      showToast('Cadastro duplicado: já existe ' + (exist.desc_curta || exist.id || 'item idêntico') + '. Edite o existente.', 'err');
+      return; // NÃO fecha modal, NÃO faz push local
+    }
+    if (!r || r.status !== 'ok') {
+      showToast('Erro do GAS: ' + (r?.mensagem || r?.codigo || 'falha desconhecida'), 'err');
+      return;
+    }
+    const idFinal = r.id || editId;
+    // Aplica desc_curta retornada pelo GAS se vier (pode ter sido recomposta)
+    if (r.desc_curta) payload.desc_curta = r.desc_curta;
+    const objLocal = construirObjLocal(idFinal);
+    if (editId) { const i = arr.findIndex(x => x.id === editId); if (i>=0) arr[i] = objLocal; }
+    else arr.push(objLocal);
+    closeModal('modal-catalogo');
+    renderCatalogo();
+    showToast(editId ? 'Item atualizado ✓' : 'Item salvo no catálogo ✓');
+  } catch(e) {
+    showToast('Erro de comunicação com GAS: ' + e.message, 'err');
+  }
 }
 
 function getTogVal(group) {
@@ -2820,7 +3148,7 @@ function renderKits(q='') {
       <div class="kc-sub">
         <span class="badge badge-blue">${k.bitola}</span>
         <span class="badge ${k.tipo_kit==='dcbi'?'badge-pend':'badge-gray'}" style="margin-left:4px">${k.tipo_kit.toUpperCase()}</span>
-        ${k.inclui_rs ? '<span class="badge badge-warn" style="margin-left:4px">Com RS</span>' : ''}
+        ${k.inclui_rs ? '<span class="badge badge-warn" style="margin-left:4px" title="Incluir no Registro de Segurança (NR-13)">📋 RS</span>' : ''}
       </div>
       <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Componentes</div>
       ${(k.componentes||[]).map(c=>`<div class="kit-comp"><strong>·</strong> ${c}</div>`).join('')}
@@ -2858,42 +3186,137 @@ async function salvarKit() {
   const nome = document.getElementById('kit-nome').value.trim();
   if (!nome) { showToast('Nome é obrigatório', 'err'); return; }
   let componentes = [];
-  try { componentes = JSON.parse(document.getElementById('kit-componentes').value || '[]'); } catch(e) { showToast('JSON de componentes inválido', 'err'); return; }
+  try { componentes = JSON.parse(document.getElementById('kit-componentes').value || '[]'); }
+  catch(e) { showToast('JSON de componentes inválido', 'err'); return; }
   const id = document.getElementById('kit-id').value;
   const tipo = getTogVal('kit-tipo')?.toLowerCase() || 'simples';
   const inclui_rs = getTogVal('kit-rs') === 'Sim';
-  const obj = {
-    id: id || 'KIT-' + String(DB.kits.length + 1).padStart('3','0'),
-    nome, bitola: document.getElementById('kit-bitola').value,
-    tipo_kit: tipo, componentes, inclui_rs, ativo: true
+  const bitola = document.getElementById('kit-bitola').value;
+
+  // Payload alinhado ao cabeçalho da aba CAT_KITS: id, nome, bitola, tipo_kit, componentes, inclui_rs, ativo
+  const payload = {
+    tipo: 'kits',
+    nome,
+    bitola,
+    tipo_kit: tipo,
+    componentes,                // array — GAS serializa em JSON
+    inclui_rs: String(!!inclui_rs),
+    ativo: 'true'
   };
-  if (GAS_URL) {
-    try { await gasPost('salvarItemCatalogo', { tipo: 'kits', ...obj }); } catch(e) {}
+  if (id) payload.id = id;
+
+  if (!GAS_URL) {
+    // Fallback local
+    const localId = id || 'KIT-' + String(DB.kits.length + 1).padStart(3,'0');
+    const obj = { id: localId, nome, bitola, tipo_kit: tipo, componentes, inclui_rs, ativo: true };
+    if (id) { const i = DB.kits.findIndex(x => x.id === id); if (i>=0) DB.kits[i] = obj; }
+    else DB.kits.push(obj);
+    closeModal('modal-kit');
+    renderKits();
+    showToast('Kit salvo localmente ✓ (GAS offline)', 'warn');
+    return;
   }
-  if (id) { const i = DB.kits.findIndex(x => x.id === id); if (i>=0) DB.kits[i] = obj; }
-  else DB.kits.push(obj);
-  closeModal('modal-kit');
-  renderKits();
-  showToast('Kit salvo ✓');
+
+  try {
+    const r = await gasPost('salvarItemCatalogo', payload);
+    if (r?.status === 'erro' && r?.codigo === 'DUPLICADO') {
+      showToast('Kit duplicado: ' + (r.mensagem || 'já existe kit equivalente'), 'err');
+      return;
+    }
+    if (!r || r.status !== 'ok') {
+      showToast('Erro do GAS: ' + (r?.mensagem || r?.codigo || 'falha desconhecida'), 'err');
+      return;
+    }
+    const idFinal = r.id || id;
+    const obj = { id: idFinal, nome, bitola, tipo_kit: tipo, componentes, inclui_rs, ativo: true };
+    if (id) { const i = DB.kits.findIndex(x => x.id === id); if (i>=0) DB.kits[i] = obj; }
+    else DB.kits.push(obj);
+    closeModal('modal-kit');
+    renderKits();
+    showToast(id ? 'Kit atualizado ✓' : 'Kit salvo ✓');
+  } catch(e) {
+    showToast('Erro de comunicação com GAS: ' + e.message, 'err');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
 // EXCLUSÃO
 // ═══════════════════════════════════════════════════════════════
 function confirmarExclusao(tipo, id, label) {
-  document.getElementById('confirm-msg').innerHTML = `Deseja remover <strong>${label}</strong>? Esta ação não pode ser desfeita.`;
-  document.getElementById('confirm-btn').onclick = () => {
-    excluir(tipo, id);
+  document.getElementById('confirm-msg').innerHTML = `Deseja remover <strong>${label}</strong>? O item será inativado (pode ser reativado depois).`;
+  document.getElementById('confirm-btn').onclick = async () => {
     closeModal('modal-confirm');
+    await excluir(tipo, id);
   };
   openModal('modal-confirm');
 }
 
-function excluir(tipo, id) {
-  if (tipo === 'cliente') DB.clientes = DB.clientes.filter(x => x.id_cliente !== id), renderClientes(), populateClienteSelects();
-  else if (tipo === 'os') DB.os = DB.os.filter(x => x.id_os !== id), renderOS();
-  else if (tipo === 'equip') DB.equipamentos = DB.equipamentos.filter(x => x.id_equipamento !== id), renderEquipamentos();
-  else if (tipo === 'kit') DB.kits = DB.kits.filter(x => x.id !== id), renderKits();
+// [REMOVER_GAS] S17 — remoção agora chama toggleAtivoItem (inativa, não apaga)
+// Itens permanecem no banco com ativo:false e somem da listagem padrão.
+async function excluir(tipo, id) {
+  // OS continua com fluxo antigo (encerramento, não inativação simples)
+  if (tipo === 'os') {
+    DB.os = DB.os.filter(x => x.id_os !== id);
+    renderOS();
+    showToast('OS removida da lista local. Use encerramento para arquivar formalmente.', 'warn');
+    return;
+  }
+
+  // Mapa tipo (UI) → endpoint GAS toggleAtivoItem
+  const mapaGAS = {
+    cliente: 'clientes',
+    equip: 'equipamentos',
+    kit: 'kits',
+    manometro: 'manometros',
+    valvula: 'valvulas',
+    purgador: 'purgadores',
+    dcbi: 'dcbi',
+    conexao: 'conexoes'
+  };
+  const tipoGAS = mapaGAS[tipo];
+  if (!tipoGAS) {
+    showToast('Tipo de remoção não suportado: ' + tipo, 'err');
+    return;
+  }
+
+  if (GAS_URL) {
+    try {
+      const r = await gasPost('toggleAtivoItem', { tipo: tipoGAS, id, ativo: 'false' });
+      if (!r || r.status !== 'ok') {
+        showToast('GAS rejeitou remoção: ' + (r?.mensagem || 'erro desconhecido'), 'err');
+        return;
+      }
+    } catch(e) {
+      showToast('Erro de comunicação com GAS: ' + e.message, 'err');
+      return;
+    }
+  } else {
+    showToast('⚠ GAS offline — remoção apenas local', 'warn');
+  }
+
+  // Marcar como inativo no array local (NÃO remover) para preservar histórico
+  const refs = {
+    cliente:   { arr: DB.clientes,            idField: 'id_cliente'      },
+    equip:     { arr: DB.equipamentos,        idField: 'id_equipamento'  },
+    kit:       { arr: DB.kits,                idField: 'id'              },
+    manometro: { arr: DB.catalogo.manometro,  idField: 'id'              },
+    valvula:   { arr: DB.catalogo.valvula,    idField: 'id'              },
+    purgador:  { arr: DB.catalogo.purgador,   idField: 'id'              },
+    dcbi:      { arr: DB.catalogo.dcbi,       idField: 'id'              },
+    conexao:   { arr: DB.catalogo.conexao,    idField: 'id'              }
+  };
+  const ref = refs[tipo];
+  if (ref && Array.isArray(ref.arr)) {
+    const item = ref.arr.find(x => x[ref.idField] === id);
+    if (item) item.ativo = false;
+  }
+
+  // Re-render
+  if (tipo === 'cliente')      { renderClientes(); if (typeof populateClienteSelects === 'function') populateClienteSelects(); }
+  else if (tipo === 'equip')   { renderEquipamentos(); }
+  else if (tipo === 'kit')     { renderKits(); }
+  else                         { renderCatalogo(); }
+
   showToast('Removido ✓');
 }
 
